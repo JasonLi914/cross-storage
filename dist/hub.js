@@ -9,6 +9,120 @@
  */
 
 ;(function(root) {
+  /**
+   * LocalStorageAdapter defines an interface for a web storage Adapter to be passed in
+   * to CrossStorageHub when initialized. The API is the same as localStorage, but transforms
+   * it to asynchronous execution.
+   */
+  var LocalStorageAdapter = {};
+
+  /**
+   * Retrieves the value of the given key from localStorage asynchronously. Accepts a Node-style callback
+   * to call when the request is fulfilled or an error is caught. Uses setTimeout to make it asynchronous, 
+   * which is supported in IE8.
+   * 
+   * @param {string} key Key to retrieve from localStorage
+   * @param {function} callback Node-style callback to call when getItem is finished
+   */
+  LocalStorageAdapter.getItem = function(key, callback) {
+    setTimeout(function() {
+      try {
+        callback(null, window.localStorage.getItem(key));
+      } catch (err) {
+        callback(err);
+      }
+    }, 0);
+  };
+
+  /**
+   * Sets the key to the specified value in localStorage asynchronously. Accepts a Node-style callback
+   * to call when the request is fulfilled or an error is caught. Uses setTimeout to make it asynchronous, 
+   * which is supported in IE8.
+   * 
+   * @param {string} key Key to set in localStorage
+   * @param {string} value Value to set to the key
+   * @param {function} callback Node-style callback to call when finished
+   */
+  LocalStorageAdapter.setItem = function(key, value, callback) {
+    setTimeout(function() {
+      try {
+        callback(null, window.localStorage.setItem(key, value));
+      } catch (err) {
+        callback(err);
+      }
+    }, 0);
+  };
+
+  /**
+   * Deletes the specified key from localStorage asynchronously. Accepts a Node-style callback
+   * to call when the request is fulfilled or an error is caught. Uses setTimeout to make it asynchronous, 
+   * which is supported in IE8.
+   * 
+   * @param {string} key Key to delete in localStorage
+   * @param {function} callback Node-style callback to call when finished
+   */
+  LocalStorageAdapter.removeItem = function(key, callback) {
+    setTimeout(function() {
+      try {
+        callback(null, window.localStorage.removeItem(key));
+      } catch (err) {
+        callback(err);
+      }
+    }, 0);
+  };
+
+  /**
+   * Gets the key at the specified index from localStorage asynchronously. Accepts a Node-style callback
+   * to call when the request is fulfilled or an error is caught. Uses setTimeout to make it asynchronous, 
+   * which is supported in IE8.
+   * 
+   * @param {string} index Index of key to retrieve from localStorage
+   * @param {function} callback Node-style callback to call when finished
+   */
+  LocalStorageAdapter.key = function(index, callback) {
+    setTimeout(function() {
+      try {
+        callback(null, window.localStorage.key(index));
+      } catch (err) {
+        callback(err);
+      }
+    }, 0);
+  };
+
+  /**
+   * Gets number of keys from localStorage asynchronously. Accepts a Node-style callback
+   * to call when the request is fulfilled or an error is caught. Uses setTimeout to make it asynchronous, 
+   * which is supported in IE8.
+   * 
+   * @param {function} callback Node-style callback to call when finished
+   */
+  LocalStorageAdapter.length = function(callback) {
+    setTimeout(function() {
+      try {
+        callback(null, window.localStorage.length);
+      } catch (err) {
+        callback(err);
+      }
+    }, 0);
+  };
+
+  /**
+   * Clears all keys from localStorage asynchronously. Accepts a Node-style callback
+   * to call when the request is fulfilled or an error is caught. Uses setTimeout to make it asynchronous, 
+   * which is supported in IE8.
+   * 
+   * @param {function} callback Node-style callback to call when finished
+   */
+  LocalStorageAdapter.clear = function(callback) {
+    setTimeout(function() {
+      try {
+        callback(null, window.localStorage.clear());
+      } catch (err) {
+        callback(err);
+      }
+    }, 0);
+  };
+
   var CrossStorageHub = {};
 
   /**
@@ -18,6 +132,13 @@
    * the matching origins, allowing access to the associated lists of methods.
    * Methods may include any of: get, set, del, getKeys and clear. A 'ready'
    * message is sent to the parent window once complete.
+   * 
+   * Also accepts an adapter for client-side storage that CrossStorageHub will use 
+   * instead of localStorage. This adapter should follow the interface specified 
+   * by LocalStorageAdapter. Methods required are similar to that of localStorage: 
+   * getItem, setItem, removeItem, key, length, and clear. However, this adapter requires
+   * its methods to be asynchronous and to also take in each a callback function to call
+   * once the asynchronous request has finished executing.
    *
    * @example
    * // Subdomain can get, but only root domain can set and del
@@ -25,16 +146,18 @@
    *   {origin: /\.example.com$/,        allow: ['get']},
    *   {origin: /:(www\.)?example.com$/, allow: ['get', 'set', 'del']}
    * ]);
+   * 
    *
    * @param {array} permissions An array of objects with origin and allow
+   * @param {instance} StorageAdapter (optional) An adapter for client-side storage. Defaults to LocalStorageAdapter if not specified 
    */
-  CrossStorageHub.init = function(permissions) {
+  CrossStorageHub.init = function(permissions, StorageAdapter) {
     var available = true;
 
-    // Return if localStorage is unavailable, or third party
+    // Return if StorageAdapter not specified and localStorage is unavailable, or third party
     // access is disabled
     try {
-      if (!window.localStorage) available = false;
+      if (!StorageAdapter && !window.localStorage) available = false;
     } catch (e) {
       available = false;
     }
@@ -47,6 +170,7 @@
       }
     }
 
+    CrossStorageHub._storageAdapter = StorageAdapter || LocalStorageAdapter; // if an Adapter is not specified, defaults to LocalStorageAdapter
     CrossStorageHub._permissions = permissions || [];
     CrossStorageHub._installListener();
     window.parent.postMessage('cross-storage:ready', '*');
@@ -76,7 +200,7 @@
    * @param {MessageEvent} message A message to be processed
    */
   CrossStorageHub._listener = function(message) {
-    var origin, targetOrigin, request, method, error, result, response;
+    var origin, request, method, error, result;
 
     // postMessage returns the string "null" as the origin for "file://"
     origin = (message.origin === 'null') ? 'file://' : message.origin;
@@ -107,25 +231,38 @@
       return;
     } else if (!CrossStorageHub._permitted(origin, method)) {
       error = 'Invalid permissions for ' + method;
+      CrossStorageHub._postMessage(origin, request, error, result);
     } else {
-      try {
-        result = CrossStorageHub['_' + method](request.params);
-      } catch (err) {
-        error = err.message;
-      }
+      CrossStorageHub['_' + method](request.params, function(err, value) {
+        if (err) {
+          CrossStorageHub._postMessage(origin, request, err.message, result);
+        } else {
+          CrossStorageHub._postMessage(origin, request, error, value);
+        }
+      });
     }
+  };
 
-    response = JSON.stringify({
+  /**
+   * Posts a message back to the window.
+   * 
+   * @param {string} origin Origin of the request to post a message back to
+   * @param {string} request Request that was made from the client
+   * @param {string} error Error message to post back if exists
+   * @param {string} result Result from the request to post back if exists
+   */
+  CrossStorageHub._postMessage = function(origin, request, error, result) {
+    var response = JSON.stringify({
       id: request.id,
       error: error,
       result: result
     });
 
     // postMessage requires that the target origin be set to "*" for "file://"
-    targetOrigin = (origin === 'file://') ? '*' : origin;
+    var targetOrigin = (origin === 'file://') ? '*' : origin;
 
     window.parent.postMessage(response, targetOrigin);
-  };
+  }
 
   /**
    * Returns a boolean indicating whether or not the requested method is
@@ -160,75 +297,115 @@
   };
 
   /**
-   * Sets a key to the specified value.
+   * Sets a key to the specified value. Requires a Node-style callback to call when request
+   * is fulfilled or an error is caught.
    *
    * @param {object} params An object with key and value
+   * @param {object} callback Node-style callback function to call when finished executing
    */
-  CrossStorageHub._set = function(params) {
-    window.localStorage.setItem(params.key, params.value);
+  CrossStorageHub._set = function(params, callback) {
+    CrossStorageHub._storageAdapter.setItem(params.key, params.value, callback);
   };
 
   /**
    * Accepts an object with an array of keys for which to retrieve their values.
-   * Returns a single value if only one key was supplied, otherwise it returns
+   * Requires a Node-style callback to call when request is fulfilled or an error is caught.
+   * Passes to the callback a single value if only one key was supplied, otherwise it passes
    * an array. Any keys not set result in a null element in the resulting array.
    *
-   * @param   {object} params An object with an array of keys
-   * @returns {*|*[]}  Either a single value, or an array
+   * @param {object} params An object with an array of keys
+   * @param {object} callback Node-style callback function to call when finished executing
    */
-  CrossStorageHub._get = function(params) {
-    var storage, result, i, value;
-
-    storage = window.localStorage;
-    result = [];
-
-    for (i = 0; i < params.keys.length; i++) {
-      try {
-        value = storage.getItem(params.keys[i]);
-      } catch (e) {
-        value = null;
+  CrossStorageHub._get = function(params, callback) {
+    CrossStorageHub._all(params.keys, 'getItem', function(err, value) {
+      if (err) {
+        callback(err);
+      } else {
+        var result = (value.length > 1) ? value : value[0];
+        if (!result) {
+          callback(null, null);
+        } else {
+          callback(null, result);
+        }
       }
-
-      result.push(value);
-    }
-
-    return (result.length > 1) ? result : result[0];
+    });
   };
 
   /**
    * Deletes all keys specified in the array found at params.keys.
+   * Requires a Node-style callback to call when request is fulfilled or an error is caught.
    *
    * @param {object} params An object with an array of keys
+   * @param {object} callback Node-style callback function to call when finished executing
    */
-  CrossStorageHub._del = function(params) {
-    for (var i = 0; i < params.keys.length; i++) {
-      window.localStorage.removeItem(params.keys[i]);
-    }
+  CrossStorageHub._del = function(params, callback) {
+    CrossStorageHub._all(params.keys, 'removeItem', function(err, value) {
+      if (err) {
+        callback(err);
+      } else {
+        callback(null);
+      }
+    });
   };
 
   /**
-   * Clears localStorage.
+   * Clears localStorage. Requires a Node-style callback to call when request
+   * is fulfilled or an error is caught.
+   * 
+   * @param {object} params An object with an array of keys. (Will be null in this case, but is needed to be consistent with other functions)
+   * @param {object} callback Node-style callback function to call when finished executing
    */
-  CrossStorageHub._clear = function() {
-    window.localStorage.clear();
+  CrossStorageHub._clear = function(params, callback) {
+    CrossStorageHub._storageAdapter.clear(callback);
   };
 
   /**
-   * Returns an array of all keys stored in localStorage.
-   *
-   * @returns {string[]} The array of keys
+   * Requires a Node-style callback to call when request is fulfilled or an error is caught. 
+   * Value passed to callback will be an array of all keys stored in localStorage.
+   * 
+   * @param {object} params An object with an array of keys. (Will be null in this case, but is needed to be consistent with other functions)
+   * @param {object} callback Node-style callback function to call when finished executing
    */
-  CrossStorageHub._getKeys = function(params) {
-    var i, length, keys;
+  CrossStorageHub._getKeys = function(params, callback) {
+    CrossStorageHub._storageAdapter.length(function(err, value) {
+      if (err) {
+        callback(err);
+      } else {
+        var indices = new Array(value);
+        for (var i = 0; i < indices.length; i++) {
+          indices[i] = i;
+        }
+        CrossStorageHub._all(indices, 'key', callback);
+      }
+    });
+  };
 
-    keys = [];
-    length = window.localStorage.length;
-
-    for (i = 0; i < length; i++) {
-      keys.push(window.localStorage.key(i));
+  /**
+   * Helper function to run multiple asynchronous methods. Passes back to callback the results of all asynchronous functions
+   * in an array. Supports IE8.
+   * 
+   * @param {array} params The parameters to call CrossStorageHub._storageAdapter method with
+   * @param {function} method The name of the method in CrossStorageHub._storageAdapter to call
+   * @param {function} callback The Node-style callback to call when this function is done executing
+   */
+  CrossStorageHub._all = function(params, method, callback) {
+    var results = new Array(params.length);
+    var pending = params.length;
+    for (var i = 0; i < params.length; i++) {
+      (function(i) {
+        CrossStorageHub._storageAdapter[method](params[i], function(err, value) {
+          if (err) {
+            callback(err);
+          } else {
+            results[i] = value;
+            pending -=1;
+            if (pending === 0) {
+              callback(null, results);
+            }
+          }
+        });
+      })(i);
     }
-
-    return keys;
   };
 
   /**
@@ -237,7 +414,7 @@
    * unavailable for IE8.
    *
    * @param   {*}    value The value to find
-   * @parma   {[]*}  array The array in which to search
+   * @param   {[]*}  array The array in which to search
    * @returns {bool} Whether or not the value was found
    */
   CrossStorageHub._inArray = function(value, array) {
